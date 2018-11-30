@@ -7,12 +7,12 @@ import unittest
 
 from fireworks import FWorker
 from fireworks.core.rocket_launcher import rapidfire
-
+from pymatgen.core import Lattice
 from atomate.vasp.powerups import use_fake_vasp
-from atomate.vasp.workflows.base.grain_boundary import get_wf_gb
+from atomate.vasp.workflows.base.grain_boundary import *
 from atomate.utils.testing import AtomateTest
 from pymatgen.core import Structure
-from pymatgen.analysis.gb.gb import GBGenerator
+from pymatgen.analysis.gb.grain import GrainBoundaryGenerator
 
 __author__ = 'Hui Zheng'
 __email__ = 'huz071@eng.ucsd.edu'
@@ -38,12 +38,12 @@ class TestGrainboundaryWorkflow(AtomateTest):
         super(TestGrainboundaryWorkflow, self).setUp()
         self.bulk_structure = Structure.from_spacegroup("Im-3m", Lattice.cubic(3.42682), ["Li", "Li"],
                                                         [[0, 0, 0], [0.5, 0.5, 0.5]])
-        gbg = GBGenerator(self.bulk_structure)
+        gbg = GrainBoundaryGenerator(self.bulk_structure)
         gb_100_s5 = gbg.gb_from_parameters(**gb_gen_params_s5)
         gb_info_s5 = gb_100_s5.as_dict()
-        self.wf_1 = get_wf_gb(gb=None,
-                              bulk_structure=self.bulk_structure, gb_gen_params=gb_gen_params_s3,
-                              db_file=os.path.join(db_dir, "db.json"))
+        self.wf_1 = get_wf_gb_from_bulk(bulk_structure=self.bulk_structure,
+                                        gb_gen_params=gb_gen_params_s3,
+                                        db_file=os.path.join(db_dir, "db.json"))
         self.wf_2 = get_wf_gb(gb=gb_100_s5, bulk_structure=None, gb_gen_params=None,
                               additional_info=gb_info_s5, tag=["mp-135"],
                               db_file=os.path.join(db_dir, "db.json"))
