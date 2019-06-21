@@ -5,7 +5,8 @@ from __future__ import absolute_import, division, print_function, \
 
 import warnings
 
-from atomate.vasp.config import HALF_KPOINTS_FIRST_RELAX, RELAX_MAX_FORCE
+from atomate.vasp.config import HALF_KPOINTS_FIRST_RELAX, RELAX_MAX_FORCE, \
+    VASP_CMD, DB_FILE
 
 """
 Defines standardized Fireworks that can be chained easily to perform various
@@ -35,8 +36,8 @@ class OptimizeFW(Firework):
 
     def __init__(self, structure, name="structure optimization",
                  vasp_input_set=None,
-                 vasp_cmd="vasp", override_default_vasp_params=None,
-                 ediffg=None, db_file=None,
+                 vasp_cmd=VASP_CMD, override_default_vasp_params=None,
+                 ediffg=None, db_file=DB_FILE,
                  force_gamma=True, job_type="double_relaxation_run",
                  max_force_threshold=RELAX_MAX_FORCE,
                  auto_npar=">>auto_npar<<",
@@ -88,7 +89,8 @@ class OptimizeFW(Firework):
 class StaticFW(Firework):
 
     def __init__(self, structure=None, name="static", vasp_input_set=None, vasp_input_set_params=None,
-                 vasp_cmd="vasp", prev_calc_loc=True, prev_calc_dir=None, db_file=None, vasptodb_kwargs={}, parents=None, **kwargs):
+                 vasp_cmd=VASP_CMD, prev_calc_loc=True, prev_calc_dir=None, db_file=DB_FILE, vasptodb_kwargs=None,
+                 parents=None, **kwargs):
         """
         Standard static calculation Firework - either from a previous location or from a structure.
 
@@ -107,11 +109,16 @@ class StaticFW(Firework):
             prev_calc_dir (str): Path to a previous calculation to copy from
             db_file (str): Path to file specifying db credentials.
             parents (Firework): Parents of this particular Firework. FW or list of FWS.
+            vasptodb_kwargs (dict): kwargs to pass to VaspToDb
             \*\*kwargs: Other kwargs that are passed to Firework.__init__.
         """
         t = []
 
         vasp_input_set_params = vasp_input_set_params or {}
+        vasptodb_kwargs = vasptodb_kwargs or {}
+        if "additional_fields" not in vasptodb_kwargs:
+            vasptodb_kwargs["additional_fields"] = {}
+        vasptodb_kwargs["additional_fields"]["task_label"] = name
 
         fw_name = "{}-{}".format(structure.composition.reduced_formula if structure else "unknown", name)
 
@@ -127,21 +134,21 @@ class StaticFW(Firework):
             vasp_input_set = vasp_input_set or MPStaticSet(structure)
             t.append(WriteVaspFromIOSet(structure=structure,
                                         vasp_input_set=vasp_input_set,
-                                        vasp_input_set_params=vasp_input_set_params))
+                                        vasp_input_params=vasp_input_set_params))
         else:
             raise ValueError("Must specify structure or previous calculation")
 
         t.append(RunVaspCustodian(vasp_cmd=vasp_cmd, auto_npar=">>auto_npar<<"))
         t.append(PassCalcLocs(name=name))
         t.append(
-            VaspToDb(db_file=db_file, additional_fields={"task_label": name}, **vasptodb_kwargs))
+            VaspToDb(db_file=db_file, **vasptodb_kwargs))
         super(StaticFW, self).__init__(t, parents=parents, name=fw_name, **kwargs)
 
 
 class StaticInterpolateFW(Firework):
 
     def __init__(self, structure, start, end, name="static", vasp_input_set="MPStaticSet",
-                 vasp_input_set_params=None, vasp_cmd="vasp", db_file=None,
+                 vasp_input_set_params=None, vasp_cmd=VASP_CMD, db_file=DB_FILE,
                  parents=None, this_image=None, nimages=None, autosort_tol=0, **kwargs):
         """
         Standard static calculation Firework that interpolates structures from two previous calculations.
@@ -171,7 +178,7 @@ class StaticInterpolateFW(Firework):
         t.append(WriteVaspFromIOSetFromInterpolatedPOSCAR(
             start=start, end=end, this_image=this_image, nimages=nimages,
             autosort_tol=autosort_tol, vasp_input_set=vasp_input_set,
-            vasp_input_set_params=vasp_input_set_params))
+            vasp_input_params=vasp_input_set_params))
 
         t.append(RunVaspCustodian(vasp_cmd=vasp_cmd, auto_npar=">>auto_npar<<"))
         t.append(PassCalcLocs(name=name))
@@ -184,7 +191,7 @@ class StaticInterpolateFW(Firework):
 class HSEBSFW(Firework):
 
     def __init__(self, parents=None, prev_calc_dir=None, structure=None, mode="gap", name=None,
-                 vasp_cmd="vasp", db_file=None,
+                 vasp_cmd=VASP_CMD, db_file=DB_FILE,
                  **kwargs):
         """
         For getting a more accurate band gap or a full band structure with HSE - requires previous
@@ -231,14 +238,16 @@ class HSEBSFW(Firework):
 
 class NonSCFFW(Firework):
 
-    def __init__(self, parents=None, prev_calc_dir=None, structure=None, name="nscf", mode="uniform", vasp_cmd="vasp",
-                 copy_vasp_outputs=True, db_file=None,  **kwargs):
+    def __init__(self, parents=None, prev_calc_dir=None, structure=None,
+                 name="nscf", mode="uniform", vasp_cmd=VASP_CMD,
+                 copy_vasp_outputs=True, db_file=DB_FILE,
+                 input_set_overrides=None, **kwargs):
         """
-        Standard NonSCF Calculation Firework supporting both
-        uniform and line modes.
+        Standard NonSCF Calculation Firework supporting uniform and line modes.
 
         Args:
-            structure (Structure): Input structure - used only to set the name of the FW.
+            structure (Structure): Input structure - used only to set the name
+                of the FW.
             name (str): Name for the Firework.
             mode (str): "uniform" or "line" mode.
             vasp_cmd (str): Command to run vasp.
@@ -248,16 +257,26 @@ class NonSCFFW(Firework):
             db_file (str): Path to file specifying db credentials.
             parents (Firework): Parents of this particular Firework.
                 FW or list of FWS.
+            input_set_overrides (dict): Arguments passed to the
+                "from_prev_calc" method of the MPNonSCFSet. This parameter
+                allows a user to modify the default values of the input set.
+                For example, passing the key value pair
+                    {'reciprocal_density': 1000}
+                will override default k-point meshes for uniform calculations.
             \*\*kwargs: Other kwargs that are passed to Firework.__init__.
         """
-        fw_name = "{}-{} {}".format(structure.composition.reduced_formula if structure else "unknown", name,
-                                    mode)
+        input_set_overrides = input_set_overrides or {}
+
+        fw_name = "{}-{} {}".format(structure.composition.reduced_formula if
+                                    structure else "unknown", name, mode)
         t = []
 
         if prev_calc_dir:
-            t.append(CopyVaspOutputs(calc_dir=prev_calc_dir, additional_files=["CHGCAR"]))
+            t.append(CopyVaspOutputs(calc_dir=prev_calc_dir,
+                                     additional_files=["CHGCAR"]))
         elif parents:
-            t.append(CopyVaspOutputs(calc_loc=True, additional_files=["CHGCAR"]))
+            t.append(CopyVaspOutputs(calc_loc=True,
+                                     additional_files=["CHGCAR"]))
         else:
             raise ValueError("Must specify previous calculation for NonSCFFW")
 
@@ -265,26 +284,28 @@ class NonSCFFW(Firework):
         if mode == "uniform":
             t.append(
                 WriteVaspNSCFFromPrev(prev_calc_dir=".", mode="uniform",
-                                      reciprocal_density=1000))
+                                      **input_set_overrides))
         else:
             t.append(WriteVaspNSCFFromPrev(prev_calc_dir=".", mode="line",
-                                           reciprocal_density=20))
+                                           **input_set_overrides))
 
-        t.append(RunVaspCustodian(vasp_cmd=vasp_cmd, auto_npar=">>auto_npar<<"))
+        t.append(RunVaspCustodian(vasp_cmd=vasp_cmd,
+                                  auto_npar=">>auto_npar<<"))
         t.append(PassCalcLocs(name=name))
         t.append(VaspToDb(db_file=db_file,
                           additional_fields={"task_label": name + " " + mode},
                           parse_dos=(mode == "uniform"),
                           bandstructure_mode=mode))
 
-        super(NonSCFFW, self).__init__(t, parents=parents, name=fw_name, **kwargs)
+        super(NonSCFFW, self).__init__(t, parents=parents, name=fw_name,
+                                       **kwargs)
 
 
 class LepsFW(Firework):
 
-    def __init__(self, structure, name="static dielectric", vasp_cmd="vasp",
+    def __init__(self, structure, name="static dielectric", vasp_cmd=VASP_CMD,
                  copy_vasp_outputs=True,
-                 db_file=None, parents=None, phonon=False, mode=None,
+                 db_file=DB_FILE, parents=None, phonon=False, mode=None,
                  displacement=None,
                  user_incar_settings=None, **kwargs):
         """
@@ -361,9 +382,9 @@ class LepsFW(Firework):
 
 class DFPTFW(Firework):
 
-    def __init__(self, structure=None, prev_calc_dir=None, name="static dielectric", vasp_cmd="vasp",
+    def __init__(self, structure=None, prev_calc_dir=None, name="static dielectric", vasp_cmd=VASP_CMD,
                  copy_vasp_outputs=True, lepsilon=True,
-                 db_file=None, parents=None, user_incar_settings=None,
+                 db_file=DB_FILE, parents=None, user_incar_settings=None,
                  pass_nm_results=False, **kwargs):
         """
          Static DFPT calculation Firework
@@ -426,7 +447,7 @@ class DFPTFW(Firework):
 class RamanFW(Firework):
 
     def __init__(self, mode, displacement, prev_calc_dir=None, structure=None, name="raman",
-                 vasp_cmd="vasp", db_file=None,
+                 vasp_cmd=VASP_CMD, db_file=DB_FILE,
                  parents=None, user_incar_settings=None, **kwargs):
         """
         Static calculation Firework that computes the DFPT dielectric constant for
@@ -536,8 +557,8 @@ class TransmuterFW(Firework):
 
     def __init__(self, structure, transformations, transformation_params=None,
                  vasp_input_set=None, prev_calc_dir=None,
-                 name="structure transmuter", vasp_cmd="vasp",
-                 copy_vasp_outputs=True, db_file=None,
+                 name="structure transmuter", vasp_cmd=VASP_CMD,
+                 copy_vasp_outputs=True, db_file=DB_FILE,
                  parents=None, override_default_vasp_params=None, **kwargs):
         """
         Apply the transformations to the input structure, write the input set corresponding
@@ -613,9 +634,9 @@ class MDFW(Firework):
 
     def __init__(self, structure, start_temp, end_temp, nsteps,
                  name="molecular dynamics",
-                 vasp_input_set=None, vasp_cmd="vasp",
+                 vasp_input_set=None, vasp_cmd=VASP_CMD,
                  override_default_vasp_params=None,
-                 wall_time=19200, db_file=None, parents=None,
+                 wall_time=19200, db_file=DB_FILE, parents=None,
                  copy_vasp_outputs=True, **kwargs):
         """
         Standard firework for a single MD run.
