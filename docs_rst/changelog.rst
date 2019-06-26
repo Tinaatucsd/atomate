@@ -2,6 +2,57 @@
 atomate Changelog
 =================
 
+**v0.9.1**
+
+* bugfix: ``vasp_input_set_params`` --> ``vasp_input_params`` in some cases (thanks to M. Horton for pointing out)
+* add ability to put mongoclient_kwargs in CalcDB creds file (thanks to S. Torissi for pointing out the feature request)
+
+**v0.9.0**
+
+* better error message (L. Ward)
+* Fix db authentication issue in v0.8.9 (M. Siron)
+* Change default vasp_cmd and db_file to those in config.py (M. Horton)
+* update plots in docs (A. Ganose)
+
+**v0.8.9**
+
+.. caution:: this version introduced a quirk in the db authentication scheme, you might need to set authsource manually or update to v0.9.0
+
+* fix NSCF run kpoint mesh and Boltztrap workflow to reflect pymatgen updates (A. Ganose)
+* allow "authsource" parameter in db.json files (A. Jain)
+* add powerup for turning off gzip (D. Broberg)
+
+**v0.8.8**
+
+* magnetic ordering workflows (M. Horton)
+* better checks for AECAR storage (J. Shen)
+* update VASP NCF set NEDOS (M. Dylla)
+
+**v0.8.7**
+
+* store custodian data in its own key in FWAction (E. Sivonxay)
+
+**v0.8.6**
+
+* add bandstructure no-opt workflow preset (A. Ganose)
+
+**v0.8.5**
+
+* add NMR workflow (S. Dwaraknath)
+* surface workflow refactor (J. Montoya)
+* update elasticity package for latest pymatgen (J. Montoya)
+
+**v0.8.4**
+
+* add some QChem functionality! (S. Blau, E. Spotte-Smith)
+* better credential parsing in CalcDB (A. Rutt)
+* update paramiko for better security (A. Jain)
+* add tasks_settings.yaml to site-packages (A. Jain)
+
+**v0.8.3**
+
+* add CHGCAR and AECAR storage options (J. Shen)
+
 **v0.8.2**
 
 * various requirement updates, code refactorings, and bug fixes especially in Qchem and LAMMPs packages (S. Blau)

@@ -2,7 +2,7 @@
 
 from __future__ import division, print_function, unicode_literals, absolute_import
 
-from monty.json import MontyEncoder
+from monty.json import MontyEncoder, MontyDecoder
 
 """
 This module defines the database classes.
@@ -34,8 +34,9 @@ class VaspCalcDb(CalcDb):
     """
 
     def __init__(self, host="localhost", port=27017, database="vasp", collection="tasks", user=None,
-                 password=None):
-        super(VaspCalcDb, self).__init__(host, port, database, collection, user, password)
+                 password=None, **kwargs):
+        super(VaspCalcDb, self).__init__(host, port, database, collection, user,
+                                         password, **kwargs)
 
     def build_indexes(self, indexes=None, background=True):
         """
@@ -70,7 +71,9 @@ class VaspCalcDb(CalcDb):
     def insert_task(self, task_doc, use_gridfs=False):
         """
         Inserts a task document (e.g., as returned by Drone.assimilate()) into the database.
-        Handles putting DOS and band structure into GridFS as needed.
+        Handles putting DOS, band structure and charge density into GridFS as needed.
+        During testing, a percentage of runs on some clusters had corrupted AECCAR files when even if everything else about the calculation looked OK.
+        So we do a quick check here and only record the AECCARs if they are valid
 
         Args:
             task_doc: (dict) the task document
@@ -80,17 +83,40 @@ class VaspCalcDb(CalcDb):
         """
         dos = None
         bs = None
+        chgcar = None
+        aeccar0 = None
+        write_aeccar = False
 
-        # move dos and BS from doc to gridfs
+        # move dos BS and CHGCAR from doc to gridfs
         if use_gridfs and "calcs_reversed" in task_doc:
 
-            if "dos" in task_doc["calcs_reversed"][0]:  # only store idx=0 DOS
+            if "dos" in task_doc["calcs_reversed"][0]:  # only store idx=0 (last step)
                 dos = json.dumps(task_doc["calcs_reversed"][0]["dos"], cls=MontyEncoder)
                 del task_doc["calcs_reversed"][0]["dos"]
 
-            if "bandstructure" in task_doc["calcs_reversed"][0]:  # only store idx=0 BS
+            if "bandstructure" in task_doc["calcs_reversed"][0]:  # only store idx=0 (last step)
                 bs = json.dumps(task_doc["calcs_reversed"][0]["bandstructure"], cls=MontyEncoder)
                 del task_doc["calcs_reversed"][0]["bandstructure"]
+
+            if "chgcar" in task_doc["calcs_reversed"][0]:  # only store idx=0 DOS
+                chgcar = json.dumps(task_doc["calcs_reversed"][0]["chgcar"], cls=MontyEncoder)
+                del task_doc["calcs_reversed"][0]["chgcar"]
+
+            if "aeccar0" in task_doc["calcs_reversed"][0]:
+                aeccar0 = task_doc["calcs_reversed"][0]["aeccar0"]
+                aeccar2 = task_doc["calcs_reversed"][0]["aeccar2"]
+                # check if the aeccar is valid before insertion
+                if (aeccar0.data['total'] + aeccar2.data['total']).min() < 0:
+                    logger.warning(f"The AECCAR seems to be corrupted for task_in directory {task_doc['dir_name']}\nSkipping storage of AECCARs")
+                    write_aeccar = False
+                else:
+                    # overwrite the aeccar variable with their string representations to be inserted in GridFS
+                    aeccar0 = json.dumps(task_doc["calcs_reversed"][0]["aeccar0"], cls=MontyEncoder)
+                    aeccar2 = json.dumps(task_doc["calcs_reversed"][0]["aeccar2"], cls=MontyEncoder)
+                    write_aeccar = True
+
+                del task_doc["calcs_reversed"][0]["aeccar0"]
+                del task_doc["calcs_reversed"][0]["aeccar2"]
 
         # insert the task document
         t_id = self.insert(task_doc)
@@ -110,6 +136,23 @@ class VaspCalcDb(CalcDb):
             self.collection.update_one(
                 {"task_id": t_id}, {"$set": {"calcs_reversed.0.bandstructure_fs_id": bfs_gfs_id}})
 
+        # insert the CHGCAR file into gridfs and update the task documents
+        if chgcar:
+            chgcar_gfs_id, compression_type = self.insert_gridfs(chgcar, "chgcar_fs", task_id=t_id)
+            self.collection.update_one(
+                {"task_id": t_id}, {"$set": {"calcs_reversed.0.chgcar_compression": compression_type}})
+            self.collection.update_one({"task_id": t_id}, {"$set": {"calcs_reversed.0.chgcar_fs_id": chgcar_gfs_id}})
+
+        # insert the AECCARs file into gridfs and update the task documents
+        if write_aeccar:
+            aeccar0_gfs_id, compression_type = self.insert_gridfs(aeccar0, "aeccar0_fs", task_id=t_id)
+            self.collection.update_one(
+                {"task_id": t_id}, {"$set": {"calcs_reversed.0.aeccar0_compression": compression_type}})
+            self.collection.update_one({"task_id": t_id}, {"$set": {"calcs_reversed.0.aeccar0_fs_id": aeccar0_gfs_id}})
+            aeccar2_gfs_id, compression_type = self.insert_gridfs(aeccar2, "aeccar2_fs", task_id=t_id)
+            self.collection.update_one(
+                {"task_id": t_id}, {"$set": {"calcs_reversed.0.aeccar2_compression": compression_type}})
+            self.collection.update_one({"task_id": t_id}, {"$set": {"calcs_reversed.0.aeccar2_fs_id": aeccar2_gfs_id}})
         return t_id
 
     def retrieve_task(self, task_id):
@@ -131,6 +174,13 @@ class VaspCalcDb(CalcDb):
         if 'dos_fs_id' in calc:
             dos = self.get_dos(task_id)
             calc["dos"] = dos.as_dict()
+        if 'chgcar_fs_id' in calc:
+            chgcar = self.get_chgcar(task_id)
+            calc["chgcar"] = chgcar
+        if 'aeccar0_fs_id' in calc:
+            aeccar = self.get_aeccar(task_id)
+            calc["aeccar0"] = aeccar['aeccar0']
+            calc["aeccar2"] = aeccar['aeccar2']
         return task_doc
 
     def insert_gridfs(self, d, collection="fs", compress=True, oid=None, task_id=None):
@@ -183,6 +233,52 @@ class VaspCalcDb(CalcDb):
         dos_json = zlib.decompress(fs.get(fs_id).read())
         dos_dict = json.loads(dos_json.decode())
         return CompleteDos.from_dict(dos_dict)
+
+    def get_chgcar_string(self, task_id):
+        # Not really used now, consier deleting
+        m_task = self.collection.find_one({"task_id": task_id}, {"calcs_reversed": 1})
+        fs_id = m_task['calcs_reversed'][0]['chgcar_fs_id']
+        fs = gridfs.GridFS(self.db, 'chgcar_fs')
+        return zlib.decompress(fs.get(fs_id).read())
+
+    def get_chgcar(self, task_id):
+        """
+        Read the CHGCAR grid_fs data into a Chgcar object
+        Args:
+            task_id(int or str): the task_id containing the gridfs metadata
+        Returns:
+            chgcar: Chgcar object
+        """
+        m_task = self.collection.find_one({"task_id": task_id}, {"calcs_reversed": 1})
+        fs_id = m_task['calcs_reversed'][0]['chgcar_fs_id']
+        fs = gridfs.GridFS(self.db, 'chgcar_fs')
+        chgcar_json = zlib.decompress(fs.get(fs_id).read())
+        chgcar= json.loads(chgcar_json, cls=MontyDecoder)
+        return chgcar
+
+    def get_aeccar(self, task_id, check_valid = True):
+        """
+        Read the AECCAR0 + AECCAR2 grid_fs data into a Chgcar object
+        Args:
+            task_id(int or str): the task_id containing the gridfs metadata
+            check_valid (bool): make sure that the aeccar is positive definite
+        Returns:
+            {"aeccar0" : Chgcar, "aeccar2" : Chgcar}: dict of Chgcar objects
+        """
+        m_task = self.collection.find_one({"task_id": task_id}, {"calcs_reversed": 1})
+        fs_id = m_task['calcs_reversed'][0]['aeccar0_fs_id']
+        fs = gridfs.GridFS(self.db, 'aeccar0_fs')
+        aeccar_json = zlib.decompress(fs.get(fs_id).read())
+        aeccar0 = json.loads(aeccar_json, cls=MontyDecoder)
+        fs_id = m_task['calcs_reversed'][0]['aeccar2_fs_id']
+        fs = gridfs.GridFS(self.db, 'aeccar2_fs')
+        aeccar_json = zlib.decompress(fs.get(fs_id).read())
+        aeccar2 = json.loads(aeccar_json, cls=MontyDecoder)
+
+        if check_valid and (aeccar0.data['total'] + aeccar2.data['total']).min() < 0:
+            ValueError(f"The AECCAR seems to be corrupted for task_id = {task_id}")
+
+        return {'aeccar0': aeccar0, 'aeccar2': aeccar2}
 
     def reset(self):
         self.collection.delete_many({})
