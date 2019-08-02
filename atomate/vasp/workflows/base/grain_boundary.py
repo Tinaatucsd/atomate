@@ -95,9 +95,9 @@ def get_wf_gb_from_bulk(bulk_structure, gb_gen_params, vasp_input_set=None, tag=
                          parents=parents, name=name))
     parents_2 = fws[-1]
 
-    if gb_gen_params.get('plane'):
-        name += "_gb_plane{}".format(gb_gen_params['plane'])
-
+    if gb_gen_params.get('plane') and gb_gen_params.get('sigma'):
+        name += "_s{}_gb_plane{}".format(gb_gen_params['sigma'], gb_gen_params['plane'])
+        
     static_fw = StaticFW(name=name + "_gb_static", vasp_cmd=vasp_cmd,
                          prev_calc_loc=True, db_file=db_file, parents=parents_2)
     fws.append(static_fw)
