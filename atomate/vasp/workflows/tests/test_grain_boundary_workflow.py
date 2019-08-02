@@ -45,7 +45,7 @@ class TestGrainboundaryWorkflow(AtomateTest):
                                         gb_gen_params=gb_gen_params_s3,
                                         db_file=os.path.join(db_dir, "db.json"))
         self.wf_2 = get_wf_gb(gb=gb_100_s5, bulk_structure=None, gb_gen_params=None,
-                              additional_info=gb_info_s5, tag=["mp-135"],
+                              additional_info={"gb_object":gb_info_s5}, tag=["mp-135"],
                               db_file=os.path.join(db_dir, "db.json"))
 
     @classmethod

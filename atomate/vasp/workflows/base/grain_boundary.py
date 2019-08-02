@@ -36,18 +36,25 @@ def get_gb_fw(bulk_structure, gb_gen_params, db_file=None,
     Return:
         Firework
     """
+    user_incar_settings = {"PREC": "Normal", "NPAR": 4, "ISMEAR": 1, "ENCUT": 400,
+                           "ICHARG": 2, "LREAL": "False"}
 
-    vis_for_transed_gb = vasp_input_set or MVLGBSet(bulk_structure, k_product=30)
+    vis_for_transed_gb = vasp_input_set or MVLGBSet(bulk_structure, k_product=30,
+                                                    user_incar_settings=user_incar_settings)
     transformations = ["GrainBoundaryTransformation"]
     trans_params = [gb_gen_params]
 
-    return TransmuterFW(structure=bulk_structure, transformations=transformations, name="gb_transmuter",
+    name = bulk_structure.composition.reduced_formula
+    if gb_gen_params.get('plane'):
+        name += "_gb_plane{}".format(gb_gen_params['plane'])
+
+    return TransmuterFW(structure=bulk_structure, transformations=transformations, name=name + "_transmuter",
                         transformation_params=trans_params, copy_vasp_outputs=True, db_file=db_file,
                         vasp_cmd=vasp_cmd, parents=parents, vasp_input_set=vis_for_transed_gb)
 
 
-def get_wf_gb_from_bulk(bulk_structure, gb_gen_params=None, tag=None, additional_info=None,
-                        db_file=None, vasp_cmd="vasp"):
+def get_wf_gb_from_bulk(bulk_structure, gb_gen_params, vasp_input_set=None, tag=None,
+                        additional_info=None, db_file=None, vasp_cmd="vasp", name=None):
     """
     This is a workflow for grain boundary (gb) generation and calculation. Input bulk_structure and
      grain boundary (GB) generation parameters need to be specified, the workflow will relax the bulk structure
@@ -75,25 +82,34 @@ def get_wf_gb_from_bulk(bulk_structure, gb_gen_params=None, tag=None, additional
     user_incar_settings = {"PREC": "Normal", "NPAR": 4, "ISMEAR": 1, "ENCUT": 400,
                            "ICHARG": 2, "LREAL": "False"}
 
-    vis = MVLGBSet(bulk_structure, k_product=30, user_incar_settings=user_incar_settings)
+    vis = vasp_input_set or MVLGBSet(bulk_structure, k_product=30, user_incar_settings=user_incar_settings)
     fws.append(OptimizeFW(structure=bulk_structure, vasp_input_set=vis,
                           vasp_cmd=vasp_cmd, db_file=db_file, name="bulk relaxation"))
 
     parents = fws[0]
 
+    name = name or bulk_structure.composition.reduced_formula
+
     fws.append(get_gb_fw(bulk_structure=bulk_structure, gb_gen_params=gb_gen_params,
-                         db_file=db_file, vasp_cmd=vasp_cmd, parents=parents))
+                         vasp_input_set=vis, db_file=db_file, vasp_cmd=vasp_cmd,
+                         parents=parents, name=name))
+    parents_2 = fws[-1]
+
+    if gb_gen_params.get('plane'):
+        name += "_gb_plane{}".format(gb_gen_params['plane'])
+
+    static_fw = StaticFW(name=name + "_gb_static", vasp_cmd=vasp_cmd,
+                         prev_calc_loc=True, db_file=db_file, parents=parents_2)
+    fws.append(static_fw)
 
     wf = Workflow(fws, name="{} gb workflow, e.g., {}".format(len(fws), fws[0].name))
     wf_additional_info = add_additional_fields_to_taskdocs(original_wf=wf, update_dict=additional_info)
     wf_with_tag_info = add_tags(wf_additional_info, tags_list=tag)
-    # else:
-    #     wf_with_tag_info = add_tags(wf, tags_list=tag)
-
     return wf_with_tag_info
 
 
-def get_wf_gb(gb, vasp_input_set=None, tag=None, additional_info=None, db_file=None, vasp_cmd="vasp"):
+def get_wf_gb(gb, vasp_input_set=None, vasp_input_set_params=None, tag=None,
+              additional_info=None, db_file=None, vasp_cmd="vasp"):
     """
      The workflow will directly run the relaxation for the given GB structure, while the related
      additional info could be added into the database as user specified.
@@ -129,16 +145,16 @@ def get_wf_gb(gb, vasp_input_set=None, tag=None, additional_info=None, db_file=N
     fws.append(fw)
 
     parents = fws[0]
-    static_incar_settings = {"ENCUT": 400, "NSW": 0, 'NPAR':4,
-                             "NPAR": 4, "ALGO": "Normal", "IBRION": 1, "ISMEAR": 1,
-                             "SIGMA": 0.02, "PREC": "Accurate", "NELM": 60, "LVTOT": False}
+    static_incar_settings = vasp_input_set_params or {"EDIFF": 0.0001, "AMIN": 0.01,
+                                                      "ISPIN": 2, "ENCUT": 400, "NSW": 0, "EDIFFG": -0.02, "ICHARG": 2,
+                                                      "NPAR": 4, "ALGO": "Normal", "IBRION": 1, "ISMEAR": 1,
+                                                      "SIGMA": 0.02, "PREC": "Accurate", "NELM": 60, "LVTOT": False}
 
     # vis_for_static = MVLSlabSet(gb, k_product=45, bulk=False, set_mix=False,
     #                             user_incar_settings=static_incar_settings)
 
-    static_fw = StaticFW(structure=gb, name=name + "_gb static", vasp_input_set=vis_for_given_gb,
-                         vasp_cmd=vasp_cmd, vasp_input_set_params=static_incar_settings,
-                         prev_calc_loc=None, db_file=db_file, parents=parents)
+    static_fw = StaticFW(name=name + "_gb static", vasp_input_set_params=static_incar_settings,
+                         vasp_cmd=vasp_cmd, prev_calc_loc=True, db_file=db_file, parents=parents)
     fws.append(static_fw)
 
     wf = Workflow(fws, name="{} gb workflow, e.g., {}".format(len(fws), fws[0].name))
@@ -175,8 +191,11 @@ def gb_static_wf(gb, vasp_input_set=None, vasp_input_set_params=None, prev_calc_
 
     vis_for_static = vasp_input_set or MVLSlabSet(gb, k_product=45, bulk=False, set_mix=False,
                                                   user_incar_settings=static_incar_settings)
+    name = gb.composition.reduced_formula
+    if additional_info.get('gb_object'):
+        name += "_gb_plane{}".format(additional_info['gb_object']['gb_plane'])
 
-    static_fw = StaticFW(structure=gb, name="static calc", vasp_input_set=vis_for_static,
+    static_fw = StaticFW(structure=gb, name=name + "_static calc", vasp_input_set=vis_for_static,
                          vasp_input_set_params=static_incar_settings,
                          vasp_cmd=vasp_cmd, prev_calc_dir=prev_calc_dir, db_file=db_file, parents=None)
     fws.append(static_fw)
