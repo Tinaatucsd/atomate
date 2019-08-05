@@ -53,7 +53,7 @@ def get_gb_fw(bulk_structure, gb_gen_params, db_file=None,
                         vasp_cmd=vasp_cmd, parents=parents, vasp_input_set=vis_for_transed_gb)
 
 
-def get_wf_gb_from_bulk(bulk_structure, gb_gen_params, vasp_input_set=None, tag=None,
+def get_wf_gb_from_bulk(bulk_structure, gb_gen_params, vasp_input_set=None, vasp_input_set_params=None,tag=None,
                         additional_info=None, db_file=None, vasp_cmd="vasp", name=None):
     """
     This is a workflow for grain boundary (gb) generation and calculation. Input bulk_structure and
@@ -66,6 +66,8 @@ def get_wf_gb_from_bulk(bulk_structure, gb_gen_params, vasp_input_set=None, tag=
         bulk_structure (Structure): bulk structure from which generate gbs after relaxation.
         gb_gen_params (dict): dictionary of gb generation parameters, used to generate gb. The
             details of description could be found in pymatgen.analysis.gb.gb import GBGenerator,
+        vasp_input_set (VaspInputSet): input set to use for bulk and grain boundary relaxation.
+        vasp_input_set_params (dict): Dict of input set parameter for grain boundary static calculation.
         tag (list): list of strings to tag the workflow, which will be inserted into the database
             make it easier to query data later. e.g.tag = ["mp-129"] to represent bcc-Mo wf.
         additional_info (Dict): the additional info of gb structure, which you want to add.
@@ -95,11 +97,13 @@ def get_wf_gb_from_bulk(bulk_structure, gb_gen_params, vasp_input_set=None, tag=
                          parents=parents, name=name))
     parents_2 = fws[-1]
 
-    if gb_gen_params.get('plane') and gb_gen_params.get('sigma'):
-        name += "_s{}_gb_plane{}".format(gb_gen_params['sigma'], gb_gen_params['plane'])
+    if gb_gen_params.get('plane') and gb_gen_params.get('rotation_axis'):
+        name += "_axis{}_angle_{:3.5}_gb_plane{}".format(gb_gen_params['rotation_axis'],
+                                                         gb_gen_params['rotation_angle'], gb_gen_params['plane'])
         
-    static_fw = StaticFW(name=name + "_gb_static", vasp_cmd=vasp_cmd,
-                         prev_calc_loc=True, db_file=db_file, parents=parents_2)
+    static_fw = StaticFW(structure=bulk_structure, name=name + "_gb_static",
+                         vasp_input_set_params=vasp_input_set_params,
+                         vasp_cmd=vasp_cmd, prev_calc_loc=True, db_file=db_file, parents=parents_2)
     fws.append(static_fw)
 
     wf = Workflow(fws, name="{} gb workflow, e.g., {}".format(len(fws), fws[0].name))
